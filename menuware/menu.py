@@ -1,8 +1,8 @@
 import copy
 
 
-from django.core.urlresolvers import reverse
-from django.core.urlresolvers import NoReverseMatch
+from django.urls import reverse
+from django.urls import NoReverseMatch
 from django.core.exceptions import ImproperlyConfigured
 
 from . import utils as util
