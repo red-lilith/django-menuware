@@ -1,4 +1,4 @@
-Django Menuware
+Django Menuware [UPDATE DJANGO 3.0.3]
 ====================
 
 **A menu generating application for Django**
