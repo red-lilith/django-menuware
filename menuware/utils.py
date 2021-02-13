@@ -41,3 +41,15 @@ def is_anonymous(request):
     Returns True if request.user is not authenticated else returns False
     """
     return not request.user.is_authenticated
+
+
+def get_func(dotted_path):
+    module_name = '.'.join(dotted_path.split('.')[:-1])
+    function_name = dotted_path.split('.')[-1]
+    try:
+        _module = import_module(module_name)
+    except ImportError:
+        return None
+    func = getattr(_module, function_name, None)
+    return func
+

@@ -15,6 +15,17 @@ class MenuBase(object):
     def __init__(self):
         self.path = ''
         self.request = None
+        self.is_staff = False
+        self.is_superuser = False
+        self.is_authenticated = False
+        self.inheritable_attributes = [
+            'render_for_staff',
+            'render_for_superuser',
+            'render_for_authenticated',
+            'render_for_unauthenticated',
+            'render_for_user_when_condition_is_true',
+            'render_for_user_when_condition_is_false',
+        ]
 
     def save_user_state(self, request):
         """
@@ -22,6 +33,9 @@ class MenuBase(object):
         """
         self.request = request
         self.path = request.path
+        self.is_staff = request.user.is_staff
+        self.is_superuser = request.user.is_superuser
+        self.is_authenticated = request.user.is_authenticated
 
     def is_validated(self, item_dict):
         """
@@ -40,6 +54,101 @@ class MenuBase(object):
             if not func or not func(self.request): # pragma: no cover
                 return False
         return True
+
+    def is_true(self, item_dict, key):
+        """
+        Given a menu item dictionary, and a key, it returns True if key is set to True
+        else returns False
+        """
+        yep = item_dict.get(key, False)
+        return yep
+
+    def show_to_all(self, item_dict):
+        """
+        Given a menu item dictionary, it returns true if menu item should be shown
+        for both authenticated and unauthenticated users. (e.g. a `contact` menu item)
+        """
+        show = self.is_true(item_dict, 'render_for_unauthenticated') and \
+            self.is_true(item_dict, 'render_for_authenticated')
+        return show
+
+    def show_to_user_if_condition_is_true(self, item_dict):
+        """
+        Given a menu item dictionary, it returns true if menu item should be only shown
+        to users if a set condition is true. (e.g. show if user is remember of admin group)
+        """
+        condition_check_path = item_dict.get('render_for_user_when_condition_is_true')
+        if condition_check_path is None:
+            return True
+
+        condition_check_procedure = util.get_func(condition_check_path)
+        if condition_check_procedure is None:
+            return False
+
+        show = condition_check_procedure(self.request)
+        return show
+
+    def show_to_user_if_condition_is_false(self, item_dict):
+        """
+        Given a menu item dictionary, it returns true if menu item should be only shown
+        to users if a set condition is false. (e.g. show if user is not remember of admin group)
+        """
+        condition_check_path = item_dict.get('render_for_user_when_condition_is_false')
+        if condition_check_path is None:
+            return True
+
+        condition_check_procedure = util.get_func(condition_check_path)
+        if condition_check_procedure is None:
+            return False
+
+        show = condition_check_procedure(self.request)
+        return not show
+
+    def show_to_user_if_has_permission(self, item_dict):
+        """
+        Given a menu item dictionary, it returns true if menu item should be only shown
+        to users if a set condition is false. (e.g. show if user is not remember of admin group)
+        """
+        condition_check_path = item_dict.get('render_for_user_when_has_permission')
+        if condition_check_path is None:
+            return True
+        return self.request.user.has_perm(condition_check_path)
+
+    def show_to_authenticated(self, item_dict):
+        """
+        Given a menu item dictionary, it returns true if menu item should be only shown
+        to authenticated users. (e.g. a `logout` menu item)
+        """
+        show = self.is_true(item_dict, 'render_for_authenticated') and self.is_authenticated
+        return show
+
+    def show_to_unauthenticated(self, item_dict):
+        """
+        Given a menu item dictionary, it returns true if menu item should be only shown
+        to unauthenticated users. (e.g. a `login` menu item)
+        """
+        show = self.is_true(item_dict, 'render_for_unauthenticated') and not self.is_authenticated
+        return show
+
+    def show_to_superuser(self, item_dict):
+        """
+        Given a menu item dictionary, it returns true if menu item should be only shown
+        to super users. (e.g. a `admin` menu item)
+        """
+        yep = True
+        if self.is_true(item_dict, 'render_for_superuser') and not self.is_superuser:
+            yep = False
+        return yep
+
+    def show_to_staff(self, item_dict):
+        """
+        Given a menu item dictionary, it returns true if menu item should be only shown
+        to staff users. (e.g. a `limited admin` menu item)
+        """
+        yep = True
+        if self.is_true(item_dict, 'render_for_staff') and not self.is_staff:
+            yep = False
+        return yep
 
     def has_name(self, item_dict):
         """
@@ -91,6 +200,16 @@ class MenuBase(object):
                 return True
         return False
 
+    def copy_attributes(self, parent_dict, child_dict, attrs):
+        """
+        Given a list of attribute, it copies the same attributes from the parent
+        dict to the child dict.
+        """
+        for attr in attrs:
+            has_attr = parent_dict.get(attr)
+            if has_attr is not None:
+                child_dict[attr] = has_attr
+
     def get_submenu_list(self, parent_dict, depth):
         """
         Given a menu item dictionary, it returns a submenu if one exist, or
@@ -99,21 +218,46 @@ class MenuBase(object):
         submenu = parent_dict.get('submenu', None)
         if submenu is not None:
             for child_dict in submenu:
-                child_dict['validators'] = list(set(list(parent_dict.get('validators', [])) +
-                    list(child_dict.get('validators', []))))
+                self.copy_attributes(parent_dict, child_dict, self.inheritable_attributes)
             submenu = self.generate_menu(submenu, depth)
             if not submenu:
                 submenu = None
         return submenu
+
+    def get_icon(self, parent_dict):
+        """
+        Given a menu item dictionary, it returns a icon class if one exist, or
+        returns None.
+        """
+        icon_class = parent_dict.get('icon', None)
+        return icon_class
 
     def get_menu_list(self, list_dict):
         """
         A generator that returns only the visible menu items.
         """
         for item in list_dict:
-            if self.has_name(item) and self.has_url(item):
-                if self.is_validated(item):
-                    yield copy.copy(item)
+            if not self.has_name(item) or not self.has_url(item):
+                continue
+            if self.show_to_all(item):
+                pass
+            elif self.show_to_authenticated(item):
+                pass
+            elif self.show_to_unauthenticated(item):
+                pass
+            else:
+                continue
+            if not self.show_to_user_if_condition_is_true(item):
+                continue
+            if not self.show_to_user_if_condition_is_false(item):
+                continue
+            if not self.show_to_user_if_has_permission(item):
+                continue
+            if not self.show_to_superuser(item):
+                continue
+            if not self.show_to_staff(item):
+                continue
+            yield copy.copy(item)
 
     def generate_menu(self, list_dict, depth=None):
         """
@@ -126,6 +270,7 @@ class MenuBase(object):
             item['url'] = self.get_url(item)
             item['selected'] = self.is_selected(item)
             item['submenu'] = self.get_submenu_list(item, depth=current_depth + 1)
+            item['icon'] = self.get_icon(item)
             visible_menu.append(item)
 
         self.process_breadcrums(visible_menu)
